@@ -1,0 +1,2 @@
+dist/*
+src/aws_feature_store.egg-info/*
