@@ -2,7 +2,7 @@ from enum import Enum
 import attr
 from typing import Sequence, List, Dict, Any, Union
 
-from src.inputs import Config
+from aws_feature_store.inputs import Config
 
 
 class FeatureTypeEnum(Enum):

@@ -6,12 +6,12 @@ import json
 import boto3
 from boto3.session import Session
 
-from src.feature_definition import (
+from aws_feature_store.feature_definition import (
     FeatureDefinition,
     FeatureTypeEnum,
 )
 
-from src.inputs import (
+from aws_feature_store.inputs import (
     OnlineStoreConfig,
     OnlineStoreSecurityConfig,
     S3StorageConfig,
