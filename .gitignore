@@ -1,2 +1,6 @@
 dist/*
 src/aws_feature_store.egg-info/*
+*.pyc
+src/inputs.py
+1669035640745304.json
+*.ipynb
