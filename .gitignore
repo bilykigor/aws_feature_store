@@ -5,3 +5,4 @@ src/inputs.py
 *.ipynb
 src/aws_feature_store.egg-info/*
 .DS_Store
+build/*

@@ -4,6 +4,8 @@ from time import gmtime, strftime
 import awswrangler as wr
 import json
 import boto3
+import logging
+
 from boto3.session import Session
 
 from aws_feature_store.feature_definition import (
@@ -47,7 +49,6 @@ class FeatureGroup:
         self.name = name
         self.s3_uri = s3_uri
         self.boto3_session = boto3_session
-        
         #==========================================
         
         bucket_name = s3_uri.replace('s3://','').split('/')[0]
@@ -60,14 +61,16 @@ class FeatureGroup:
             s3_folder = s3_folder[:-1]
         
         self.s3_folder = s3_folder
+        self.bucket_name = bucket_name
         self.bucket = boto3_session.resource('s3').Bucket(bucket_name)
         
+        #===set up utils functions ================
         json.load_s3 = lambda f: json.load(self.bucket.Object(key=f).get()["Body"])
         json.dump_s3 = lambda obj, f: self.bucket.Object(key=f).put(Body=json.dumps(obj))
         
         #===check bucket existance=================
         folder_exists=False
-        for folder_exists in self.bucket.objects.filter(Prefix=f'{s3_folder}/'):
+        for folder_exists in self.bucket.objects.filter(Prefix=f'{self.s3_folder}/'):
             break
         if not folder_exists:
             logging.error(f'Folder {s3_folder}/ does not exist.')
@@ -75,29 +78,55 @@ class FeatureGroup:
                 
         for folder in ['data','meta_data']:
             folder_exists=False
-            for folder_exists in self.bucket.objects.filter(Prefix=f'{s3_folder}/{folder}/'):
+            for folder_exists in self.bucket.objects.filter(Prefix=f'{self.s3_folder}/{folder}/'):
                 break
             if not folder_exists:
                 logging.warn(f'Folder {s3_folder}/{folder}/ does not exist. Will be created')
                 status = self.bucket.put_object(Key=f'{s3_folder}/{folder}/')
                  
-        
         #===check if feature_group_exists===========
-        feature_group_exists=False
-        for feature_group_exists in self.bucket.objects.filter(Prefix=f'{s3_folder}/data/{self.name}/'):
-            break
-        if feature_group_exists:
-            objs = [o for o in self.bucket.objects.filter(Prefix=f'{s3_folder}/meta_data/{self.name}/')]
-            self.create_feature_store_args = json.load_s3(objs[-1].key)
+        exists_name = self.exists()
+        if exists_name is not None:
+            print(f'Found feature group {exists_name}')
+            self.create_feature_store_args = json.load_s3(exists_name)
+            self.name = exists_name.replace('/config.json','').replace(f'{s3_folder}/{folder}/','')
     
+    
+    def exists(self):
+        #===check if feature_group_exists===========
+        s3=self.boto3_session.client('s3')
+        rsp = s3.list_objects_v2(Bucket=self.bucket_name, Prefix=f'{self.s3_folder}/data/{self.name}', Delimiter="/")
+        if rsp['KeyCount']==0:
+            return None
+        
+        objs=list(obj["Prefix"] for obj in rsp["CommonPrefixes"])
+        
+        #get last oblect
+        key = objs[-1]
+        key=key.replace('/data/','/meta_data/')
+        
+        objs = [o for o in self.bucket.objects.filter(Prefix=key)]
+        if len(objs)==0:
+            return None
+        
+        try:
+            #print(f'Read config from {objs[-1].key}')
+            json.load_s3(objs[-1].key)
+        except Exception as e:
+            print(f'Failed to read config for {self.name}\n{e}')
+            return None
+        
+        return objs[-1].key
+        
 
     def create(
         self,
-        record_identifier_name: str,
         event_time_feature_name: str,
+        record_identifier_name: str = None,
         description: str = None,
         feature_script_repo: str = None,
         data_source: str = None,
+        partition_columns: List[str] = None,
         feature_definitions: Sequence[FeatureDefinition] = None,
         tags: List[Dict[str, str]] = None
     ):
@@ -108,6 +137,7 @@ class FeatureGroup:
             feature_script_repo: link to the repo with script used to create the feature group
             data_source: description what data are used to create the feature group
             feature_definitions (Sequence[FeatureDefinition]): list of FeatureDefinitions.
+            partition_columns: ordered list columns expected in data_frame which will be used for partitioning on S3
         
         Return: return_description
         """
@@ -118,6 +148,7 @@ class FeatureGroup:
             feature_definitions=[
                 feature_definition.to_dict() for feature_definition in feature_definitions
             ],
+            partition_columns=partition_columns,
             description=description,
             feature_script_repo=feature_script_repo,
             data_source=data_source,
@@ -127,14 +158,15 @@ class FeatureGroup:
         s3_uri = self.s3_uri
         
         #===check feature_group_exists===========
-        feature_group_exists=False
-        for feature_group_exists in self.bucket.objects.filter(Prefix=f'{self.s3_folder}/data/{self.name}/'):
-            break
-        if feature_group_exists:
+        if self.exists() is not None:
             raise
         #========================================
         
+        fg_time = gmtime()
+        fg_timestamp = strftime("%Y-%m-%d'T'%H:%M:%SZ", fg_time)
+        
         #===create folder =======================
+        self.name = f'{self.name}_{fg_timestamp}'
         status = self.bucket.put_object(Key=f'{self.s3_folder}/data/{self.name}/')
     
         #===create config =======================
@@ -149,9 +181,7 @@ class FeatureGroup:
         self.create_feature_store_args = create_feature_store_args
         
         #===record config to meta_data==========
-        fg_time = gmtime()
-        fg_timestamp = strftime("%Y-%m-%d'T'%H:%M:%SZ", fg_time)
-        key = f'{self.s3_folder}/meta_data/{self.name}/{fg_timestamp}.json'
+        key = f'{self.s3_folder}/meta_data/{self.name}/config.json'
         json.dump_s3(create_feature_store_args, key)
         
         return create_feature_store_args
@@ -167,16 +197,16 @@ class FeatureGroup:
 
         return self.create_feature_store_args
     
-    def ingest(
+    def ingest_data_frame(
         self,
         data_frame: DataFrame,
-        batch_name: str
+        file_name: str
     ):
         """Ingest the content of a pandas DataFrame to feature store.
 
         Args:
             data_frame (DataFrame): data_frame to be ingested to feature store splited by biz_id.
-            batch_name (str): name of the file to store on s3. (usually timestamp)
+            file_name (str): json name of the file to store on s3. (usually timestamp)
             
         Returns:
             Nothing.
@@ -186,13 +216,22 @@ class FeatureGroup:
         
         # add event_time
         event_time_feature_name = self.create_feature_store_args['event_time_feature_name']
+        partition_columns = self.create_feature_store_args['partition_columns']
         fg_time = gmtime()
         fg_timestamp = strftime("%Y-%m-%dT%H:%M:%SZ", fg_time)
         
-        biz_ids = data_frame['biz_id'].unique()
-        for biz_id in biz_ids:
-            key = f'{self.s3_uri}/data/{self.name}/{biz_id}/{fg_time.tm_year}/{fg_time.tm_mon}/{fg_time.tm_mday}/{batch_name}.json'#{fg_time.tm_hour}/
-            df = data_frame.loc[data_frame.biz_id==biz_id,columns]
-            df[event_time_feature_name] = fg_timestamp
-            wr.s3.to_json(df=df, path=key, boto3_session=self.boto3_session)
+        if partition_columns is not None:
+            for ids, g in data_frame.groupby(partition_columns):
+                if type(ids)==tuple:
+                    ids = [str(x) for x in ids]
+                else:
+                    ids = [str(ids)]
+                    
+                ids_key = '/'.join(ids)
+                
+                key = f'{self.s3_uri}/data/{self.name}/{ids_key}/{fg_time.tm_year}/{fg_time.tm_mon}/{fg_time.tm_mday}/{file_name}.json'#{fg_time.tm_hour}/
+                    
+                df = g[columns]
+                df[event_time_feature_name] = fg_timestamp
+                wr.s3.to_json(df=df, path=key, boto3_session=self.boto3_session)
             
