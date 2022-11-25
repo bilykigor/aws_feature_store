@@ -44,7 +44,8 @@ class FeatureGroup:
         self,
         name: str,
         s3_uri: str,
-        boto3_session: Session):
+        boto3_session: Session
+        ):
         
         self.name = name
         self.s3_uri = s3_uri
@@ -126,6 +127,7 @@ class FeatureGroup:
         description: str = None,
         feature_script_repo: str = None,
         data_source: str = None,
+        file_format: str='json',
         partition_columns: List[str] = None,
         feature_definitions: Sequence[FeatureDefinition] = None,
         tags: List[Dict[str, str]] = None
@@ -153,6 +155,7 @@ class FeatureGroup:
             feature_script_repo=feature_script_repo,
             data_source=data_source,
             tags=tags,
+            file_format=file_format
         )
 
         s3_uri = self.s3_uri
@@ -220,6 +223,7 @@ class FeatureGroup:
         fg_time = gmtime()
         fg_timestamp = strftime("%Y-%m-%dT%H:%M:%SZ", fg_time)
         
+        file_format = self.create_feature_store_args['file_format']
         if partition_columns is not None:
             for ids, g in data_frame.groupby(partition_columns):
                 if type(ids)==tuple:
@@ -227,11 +231,17 @@ class FeatureGroup:
                 else:
                     ids = [str(ids)]
                     
+                ids = [f'{x[0]}={x[1]}' for x in zip(partition_columns,ids)]
                 ids_key = '/'.join(ids)
                 
-                key = f'{self.s3_uri}/data/{self.name}/{ids_key}/{fg_time.tm_year}/{fg_time.tm_mon}/{fg_time.tm_mday}/{file_name}.json'#{fg_time.tm_hour}/
+                key = f'{self.s3_uri}/data/{self.name}/{ids_key}/year={fg_time.tm_year}/month={fg_time.tm_mon}/day={fg_time.tm_mday}/{file_name}.{file_format}'#{fg_time.tm_hour}/
                     
                 df = g[columns]
                 df[event_time_feature_name] = fg_timestamp
-                wr.s3.to_json(df=df, path=key, boto3_session=self.boto3_session)
+                
+                if file_format=='json':
+                    wr.s3.to_json(df=df, path=key, boto3_session=self.boto3_session)
+                elif file_format=='parquet':
+                    wr.s3.to_parquet(df=df, path=key, boto3_session=self.boto3_session)
+                    
             
