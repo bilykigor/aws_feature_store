@@ -23,8 +23,10 @@ required_packages = [
 
 setup(
     name="aws_feature_store",
-    version="0.0.12",
+    version="0.0.14",
     description="Simplified SageMaker Feature Store",
+    long_description_content_type="text/markdown",
+    long_description=read('README.md'),
     packages=find_packages(),
     py_modules=[os.path.splitext(os.path.basename(path))[0] for path in glob("aws_feature_store/*.py")],
     include_package_data=True,

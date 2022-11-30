@@ -223,6 +223,7 @@ class FeatureGroup:
         fg_time = gmtime()
         fg_timestamp = strftime("%Y-%m-%dT%H:%M:%SZ", fg_time)
         
+        print(f'Writing features to {self.s3_uri}/data/{self.name}')
         file_format = self.create_feature_store_args['file_format']
         if partition_columns is not None:
             for ids, g in data_frame.groupby(partition_columns):
