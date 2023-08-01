@@ -1,30 +1,29 @@
-import pandas as pd
-from pandas import DataFrame
-from time import gmtime, strftime
-import awswrangler as wr
 import json
-import boto3
+#import boto3
 import logging
 
+from time import gmtime, strftime
+from typing import Sequence, List, Dict#, Any, Union
+
+import awswrangler as wr
+
+from pandas import DataFrame
 from boto3.session import Session
 
 from aws_feature_store.feature_definition import (
     FeatureDefinition,
-    FeatureTypeEnum,
+    #FeatureTypeEnum,
 )
 
 from aws_feature_store.inputs import (
-    OnlineStoreConfig,
-    OnlineStoreSecurityConfig,
+    # OnlineStoreConfig,
+    # OnlineStoreSecurityConfig,
     S3StorageConfig,
     OfflineStoreConfig,
-    DataCatalogConfig,
-    FeatureValue,
-    FeatureParameter,
+    # DataCatalogConfig,
+    # FeatureValue,
+    # FeatureParameter,
 )
-
-from typing import Sequence, List, Dict, Any, Union
-
 
 
 class FeatureGroup:
@@ -44,19 +43,21 @@ class FeatureGroup:
         self,
         name: str,
         s3_uri: str,
-        boto3_session: Session
+        boto3_session: Session,
+        use_date=False
         ):
         
         self.name = name
         self.s3_uri = s3_uri
         self.boto3_session = boto3_session
+        self.use_date = use_date
         #==========================================
         
         bucket_name = s3_uri.replace('s3://','').split('/')[0]
         s3_folder = s3_uri.replace(f's3://{bucket_name}/','')
         
         if len(s3_folder)==0:
-            raise
+            raise FileNotFoundError(f'Folder {s3_folder}/ does not exist.')
         
         if s3_folder[-1]=='/':
             s3_folder = s3_folder[:-1]
@@ -75,15 +76,15 @@ class FeatureGroup:
             break
         if not folder_exists:
             logging.error(f'Folder {s3_folder}/ does not exist.')
-            raise
+            raise FileNotFoundError(f'Folder {s3_folder}/ does not exist.')
                 
         for folder in ['data','meta_data']:
             folder_exists=False
             for folder_exists in self.bucket.objects.filter(Prefix=f'{self.s3_folder}/{folder}/'):
                 break
             if not folder_exists:
-                logging.warn(f'Folder {s3_folder}/{folder}/ does not exist. Will be created')
-                status = self.bucket.put_object(Key=f'{s3_folder}/{folder}/')
+                logging.warning(f'Folder {s3_folder}/{folder}/ does not exist. Will be created')
+                self.bucket.put_object(Key=f'{s3_folder}/{folder}/')
                  
         #===check if feature_group_exists===========
         exists_name = self.exists()
@@ -113,8 +114,8 @@ class FeatureGroup:
         try:
             #print(f'Read config from {objs[-1].key}')
             json.load_s3(objs[-1].key)
-        except Exception as e:
-            print(f'Failed to read config for {self.name}\n{e}')
+        except Exception as exeption:
+            print(f'Failed to read config for {self.name}\n{exeption}')
             return None
         
         return objs[-1].key
@@ -170,7 +171,7 @@ class FeatureGroup:
         
         #===create folder =======================
         self.name = f'{self.name}_{fg_timestamp}'
-        status = self.bucket.put_object(Key=f'{self.s3_folder}/data/{self.name}/')
+        self.bucket.put_object(Key=f'{self.s3_folder}/data/{self.name}/')
     
         #===create config =======================
         s3_storage_config = S3StorageConfig(s3_uri=s3_uri)
@@ -225,9 +226,9 @@ class FeatureGroup:
         
         print(f'Writing features to {self.s3_uri}/data/{self.name}')
         file_format = self.create_feature_store_args['file_format']
-        if partition_columns is not None:
+        if partition_columns:
             for ids, g in data_frame.groupby(partition_columns):
-                if type(ids)==tuple:
+                if isinstance(ids,tuple):
                     ids = [str(x) for x in ids]
                 else:
                     ids = [str(ids)]
@@ -235,8 +236,11 @@ class FeatureGroup:
                 ids = [f'{x[0]}={x[1]}' for x in zip(partition_columns,ids)]
                 ids_key = '/'.join(ids)
                 
-                key = f'{self.s3_uri}/data/{self.name}/{ids_key}/year={fg_time.tm_year}/month={fg_time.tm_mon}/day={fg_time.tm_mday}/{file_name}.{file_format}'#{fg_time.tm_hour}/
-                    
+                if self.use_date:
+                    key = f'{self.s3_uri}/data/{self.name}/{ids_key}/year={fg_time.tm_year}/month={fg_time.tm_mon}/day={fg_time.tm_mday}/{file_name}.{file_format}'#{fg_time.tm_hour}/
+                else:
+                    key = f'{self.s3_uri}/data/{self.name}/{ids_key}/{file_name}.{file_format}'#{fg_time.tm_hour}/
+                        
                 df = g[columns]
                 df[event_time_feature_name] = fg_timestamp
                 
@@ -244,5 +248,18 @@ class FeatureGroup:
                     wr.s3.to_json(df=df, path=key, boto3_session=self.boto3_session)
                 elif file_format=='parquet':
                     wr.s3.to_parquet(df=df, path=key, boto3_session=self.boto3_session)
+        else:
+            if self.use_date:
+                key = f'{self.s3_uri}/data/{self.name}/year={fg_time.tm_year}/month={fg_time.tm_mon}/day={fg_time.tm_mday}/{file_name}.{file_format}'#{fg_time.tm_hour}/
+            else:
+                key = f'{self.s3_uri}/data/{self.name}/{file_name}.{file_format}'
+                    
+            df = data_frame[columns]
+            df[event_time_feature_name] = fg_timestamp
+            
+            if file_format=='json':
+                wr.s3.to_json(df=df, path=key, boto3_session=self.boto3_session)
+            elif file_format=='parquet':
+                wr.s3.to_parquet(df=df, path=key, boto3_session=self.boto3_session)
                     
             

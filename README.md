@@ -16,13 +16,16 @@ pip install aws_feature_store
 ---------------------------
 
 ```python
+from aws_feature_store import FeatureGroup,FeatureDefinition,FeatureTypeEnum
+
+
 bucket_name = '{bucket_for_feature_store}'
 s3_folder = '{folder_for_feature_store}'
-featuregroup_name = '{my_feature_name}_{commit_id}'
+my_feature_name = '{your_feature_name}'
 
-feature_group_name = f'{my_feature_name}/commit_id={featuregroup_name}'
+feature_group_name = f'{my_feature_name}/commit_id={my_feature_name}_{commit_id}'
 feature_group = FeatureGroup(
-        name=featuregroup_name,
+        name=feature_group_name,
         boto3_session = boto3_session,
         s3_uri=f"s3://{bucket_name}/{s3_folder}"
         )
