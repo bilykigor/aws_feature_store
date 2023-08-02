@@ -97,7 +97,7 @@ class FeatureGroup:
     def exists(self):
         #===check if feature_group_exists===========
         s3=self.boto3_session.client('s3')
-        rsp = s3.list_objects_v2(Bucket=self.bucket_name, Prefix=f'{self.s3_folder}/data/{self.name}', Delimiter="/")
+        rsp = s3.list_objects_v2(Bucket=self.bucket_name, Prefix=f'{self.s3_folder}/data/{self.name}')#, Delimiter="/")
         if rsp['KeyCount']==0:
             return None
         
