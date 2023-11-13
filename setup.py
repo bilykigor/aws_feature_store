@@ -23,7 +23,7 @@ required_packages = [
 
 setup(
     name="aws_feature_store",
-    version="0.0.15",
+    version="0.0.17",
     description="Simplified SageMaker Feature Store",
     long_description_content_type="text/markdown",
     long_description=read('README.md'),
